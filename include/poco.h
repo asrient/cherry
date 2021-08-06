@@ -10,6 +10,7 @@
 #include <Poco/Net/HTTPRequestHandler.h>
 #include <Poco/Net/HTTPRequestHandlerFactory.h>
 #include <Poco/Net/HTTPResponse.h>
+#include <Poco/Net/WebSocket.h>
 #include <Poco/Net/HTTPServerRequest.h>
 #include <Poco/Net/HTTPServerResponse.h>
 #include <Poco/Net/DatagramSocket.h>
@@ -22,6 +23,15 @@
 namespace poco{
 
 #define PN Poco::Net
+
+class WebSocket: public net::WebSocket{
+    public:
+        WebSocket(PN::WebSocket& ws): PN_ws(&ws){}
+        int receive(void *buffer, int length);
+        void send(void *buffer, int length);
+    private:
+    PN::WebSocket* PN_ws=0;
+};
 
 class HttpRequest: public net::HttpRequest{
     public:
@@ -44,6 +54,11 @@ class HttpRequest: public net::HttpRequest{
      net::dict* getAllHeaders();
      void setHeader(std::string key, std::string value);
 
+     bool canUpgradeToWs();
+     WebSocket* upgrade();
+
+     PN::HTTPServerRequest* pn_serv_req=0;
+     PN::HTTPServerResponse* pn_serv_res=0;
     private:
     PN::HTTPRequest *PN_req;
     std::istream* ibody;

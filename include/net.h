@@ -65,6 +65,8 @@ class HttpRequest{
     virtual dict* getAllHeaders();
     virtual void setHeader(std::string key, std::string value);
 
+    virtual bool canUpgradeToWs();
+    virtual WebSocket* upgrade();
 };
 
 class HttpResponse{
@@ -103,6 +105,13 @@ class ServerSocket{
         }
         virtual bool start();
         virtual bool stop();
+};
+
+class WebSocket{
+    public:
+        WebSocket(){}
+        virtual int receive(void *buffer, int length);
+        virtual void send(void *buffer, int length);
 };
 
 class TcpConnectionHandeler{

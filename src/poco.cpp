@@ -15,11 +15,23 @@
 #include <Poco/Util/ServerApplication.h>
 #include <Poco/Net/MulticastSocket.h>
 #include <Poco/TaskManager.h>
+#include <Poco/Net/WebSocket.h>
 #include <Poco/Net/NetException.h>
 #include "../include/poco.h"
 #include "../include/net.h"
 
 using namespace poco;
+
+////////// WebSocket ////////////
+
+int WebSocket::receive(void *buffer, int length){
+    int flags;
+    return PN_ws->receiveFrame(buffer, length, flags);
+}
+
+void WebSocket::send(void *buffer, int length){
+    PN_ws->sendFrame(buffer, length);
+}
 
 ////////// HttpRequest ////////////
 
@@ -71,6 +83,33 @@ PN::NameValueCollection::ConstIterator i=PN_req->begin();
     return map;
  }
 
+bool HttpRequest::canUpgradeToWs(){
+return (PN_req->find("Upgrade") != PN_req->end() && Poco::icompare((*PN_req)["Upgrade"], "websocket") == 0);
+}
+
+WebSocket* HttpRequest::upgrade(){
+    try	{
+PN::WebSocket* pn_ws = new PN::WebSocket(*pn_serv_req, *pn_serv_res);
+return new WebSocket(*pn_ws);
+    }
+    catch(PN::WebSocketException& exc){
+        switch (exc.code())
+			{
+			case PN::WebSocket::WS_ERR_HANDSHAKE_UNSUPPORTED_VERSION:
+				pn_serv_res->set("Sec-WebSocket-Version", PN::WebSocket::WEBSOCKET_VERSION);
+				// fallthrough
+			case PN::WebSocket::WS_ERR_NO_HANDSHAKE:
+			case PN::WebSocket::WS_ERR_HANDSHAKE_NO_VERSION:
+			case PN::WebSocket::WS_ERR_HANDSHAKE_NO_KEY:
+				pn_serv_res->setStatusAndReason(PN::HTTPResponse::HTTP_BAD_REQUEST);
+				pn_serv_res->setContentLength(0);
+				pn_serv_res->send();
+				break;
+			}
+        return 0;
+    }
+}
+
 ////////// HttpResponse ////////////
 
 void HttpResponse::fromPNResponse(PN::HTTPResponse *res){
@@ -114,6 +153,8 @@ public:
     {
         std::ostream &out = resp.send();
         HttpRequest reqs= HttpRequest(&req,&req.stream());
+        reqs.pn_serv_req=&req;
+        reqs.pn_serv_res=&resp;
         HttpResponse res=HttpResponse(&resp,&out);
          handler->handle(&reqs,&res);
         //out.flush();
