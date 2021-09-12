@@ -331,7 +331,7 @@ class Message {
       required this.body,
       this.version = "1.1"});
   Message.fromBuffer(ByteData buff) {
-    var tmp = {};
+    Map<String, String?> tmp = {"uid": null, "host": null, "sessionid": null};
     var offset = 0;
     var found = false;
     while (!found && offset + sepLen < buff.lengthInBytes) {
@@ -403,10 +403,7 @@ class Message {
         print("DEBUG: corrupt header field " + opt);
       }
     });
-    if (airId == null &&
-        tmp.containsKey("uid") &&
-        tmp.containsKey("host") &&
-        tmp.containsKey("sessionid")) {
+    if (airId == null && tmp["uid"] != null && tmp["host"] != null) {
       airId = AirId(
           uid: tmp["uid"], host: tmp["host"], sessionId: tmp["sessionid"]);
     }
