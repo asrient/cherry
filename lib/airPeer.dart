@@ -8,6 +8,11 @@ import 'package:raw/raw.dart';
 import 'dart:typed_data';
 //import 'package:buffer/buffer.dart';
 
+///////////////////////////////////////
+BigInt byte8max = BigInt.parse("18446744073709551615");
+int intMax = 9223372036854775807;
+//////////////////////////////////////
+
 class AirId {
   static isEqual(id1, id2) {
     return id1.airId == id2.airId;
@@ -316,7 +321,7 @@ class Message {
   AirId? to;
   AirId? from;
   int? status;
-  late var body;
+  var body;
 
   Message(
       {required this.type,
@@ -330,10 +335,10 @@ class Message {
       this.status,
       required this.body,
       this.version = "1.1"});
-  Message.fromBuffer(ByteData buff) {
-    Map<String, String?> tmp = {"uid": null, "host": null, "sessionid": null};
+
+  static int? offsetIndex(ByteData buff) {
+    bool found = false;
     var offset = 0;
-    var found = false;
     while (!found && offset + sepLen < buff.lengthInBytes) {
       found = ByteData.sublistView(buff, offset, offset + sepLen).toString() ==
           seperator;
@@ -341,9 +346,24 @@ class Message {
         offset++;
       }
     }
-    if (!found) {
-      print("DEBUG: seperator not found in the msg");
-    }
+    if (found)
+      return offset;
+    else
+      return null;
+  }
+
+  static Message? tryDecode(ByteData buff) {
+    var offset = offsetIndex(buff);
+    if (offset != null) {
+      return Message.fromBuffer(buff, offset);
+    } else
+      return null;
+  }
+
+  Message.fromBuffer(ByteData buff, int? offset) {
+    //use inside try catch
+    Map<String, String?> tmp = {"uid": null, "host": null, "sessionid": null};
+    if (offset == null) offset = offsetIndex(buff)!;
     body = ByteData.sublistView(buff, offset + sepLen);
     var head = ByteData.sublistView(buff, 0, offset).toString();
     var opts = head.split("\r\n");
@@ -464,6 +484,42 @@ class Message {
     ByteData buff = bodyList.buffer.asByteData();
     return buff;
   }
+
+  ByteData bodyAsBuffer() {
+    if (body is String) {
+      return Uint8List.fromList(body.codeUnits).buffer.asByteData();
+    }
+    return body as ByteData;
+  }
+}
+
+class MessageStream {
+  Message? m;
+  late StreamController<ByteData> _s;
+  Function onReady;
+
+  add(ByteData buff) {
+    if (m == null) {
+      m = Message.tryDecode(buff);
+      if (m != null) {
+        onReady(this);
+        _s.add(m!.bodyAsBuffer());
+      }
+    } else
+      _s.add(buff);
+  }
+
+  done() {
+    _s.close();
+  }
+
+  Stream<ByteData> get stream {
+    return _s.stream;
+  }
+
+  MessageStream(this.onReady) {
+    _s = StreamController<ByteData>();
+  }
 }
 
 /////////////////////////////////////////
@@ -549,31 +605,62 @@ class Local {
       cAddr = cAddr.split('::ffff:')[1];
     }
     print('Connection from $cAddr:$cPort'); //
+    ByteData? roaming;
+    bool isDone = false;
+    late ByteData key;
+    final msg = MessageStream((msg) {
+      //on ready, headers decoded
+      Message m = msg.m;
+      if (m.airId!.isLocal) {
+        if (m.type == 'request') {
+          //console.log('req from local client', m);
+          //this.emit('request', {key, message: m});
+        } else if (m.type == 'response') {
+          //console.log('res from local client', m);
+          //this.emit('response', {key, message: m});
+        }
+      } else {
+        print(
+            "got a msg from global address in local server $cAddr:${cPort.toString()} ${m.type} ${m.from?.str}");
+      }
+    });
+    done() {
+      // All data received
+      if (!isDone) {
+        msg.done();
+        isDone = true;
+        client.close();
+      }
+    }
 
     // listen for events from the client
     client.listen(
       // handle data from the client
       (Uint8List data) async {
-        await Future.delayed(Duration(seconds: 1));
-        final message = String.fromCharCodes(data);
-        if (message == 'Knock, knock.') {
-          client.write('Who is there?');
-        } else if (message.length < 10) {
-          client.write('$message who?');
-        } else {
-          client.write('Very funny.');
-          client.close();
-        }
+        if (roaming != null) {
+          roaming?.buffer.asUint8List().addAll(data);
+        } else
+          roaming = data.buffer.asByteData();
+        final parsedFrame = Frame.parse(roaming!);
+        roaming = parsedFrame.roaming;
+        List chunks = parsedFrame.chunks;
+        chunks.forEach((chunk) {
+          key = chunk.key;
+          bool fin = chunk.fin;
+          ByteData data = chunk.data;
+          msg.add(data);
+          if (fin) done();
+        });
       },
       // handle errors
       onError: (error) {
         print(error);
-        client.close();
+        done();
       },
       // handle the client closing the connection
       onDone: () {
         print('Client left');
-        client.close();
+        done();
       },
     );
   }
